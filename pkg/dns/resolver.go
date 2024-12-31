@@ -1,7 +1,10 @@
 package dns
 
 import (
+	"bufio"
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"net"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -14,6 +17,86 @@ func handlePacket(pc net.PacketConn, addr net.Addr, buf []byte) error {
 }
 
 func outgoingDnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessage.Parser, *dnsmessage.Header, error) {
-	fmt.Printf("New outgoing dns query for %s, servers: %v\n", question.Name.String(), servers)
-	return nil, nil, nil
+
+	fmt.Printf("New outgoing dns query for %s, servers: %+v\n", question.Name.String(), servers)
+	max := ^uint16(0)                                                  //maximum unsingned integer 16-bit initialized to 0. Range is from 0 to 65535.
+	randomNumber, err := rand.Int(rand.Reader, big.NewInt(int64(max))) //crypto/rand package to generate a cryptographically secure random number.
+	//The random number will be in the range [0, max).
+	//rand.Reader is a source to secure random bytes
+	if err != nil {
+		return nil, nil, err
+	}
+	//Message of type dnsmessage.Message
+	//type Message struct {
+	//Header
+	//Questions   []Question
+	//Answers     []Resource
+	//Authorities []Resource
+	//Additionals []Resource
+	//}
+
+	message := dnsmessage.Message{
+		//Header is of type dnsmessage.Header
+		Header: dnsmessage.Header{
+			ID:       uint16(randomNumber.Int64()),
+			Response: false, //because it is a Question
+			OpCode:   dnsmessage.OpCode(0),
+		},
+		Questions: []dnsmessage.Question{question},
+	}
+
+	//The Pack method serializes a dnsmessage.Message into wire format (a byte slice)
+	buf, err := message.Pack()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var conn net.Conn //setting up connection
+	//loop iterates through servers slice , trying to connect to each DNS server.
+	for _, server := range servers {
+		conn, err = net.Dial("udp", server.String()+":53") //udp port is 53 on dns
+		if err == nil {
+			break //Successfully connected
+		}
+
+		if conn == nil {
+			return nil, nil, fmt.Errorf("Failed ti make connections to servers: %s", err)
+		}
+	}
+
+	_, err = conn.Write(buf) //sending data
+	if err != nil {
+		return nil, nil, err
+	}
+
+	answer := make([]byte, 512)
+	n, err := bufio.NewReader(conn).Read(answer) //reads data from the conn and stores it answer.
+	if err != nil {
+		return nil, nil, err
+	}
+
+	conn.Close()
+
+	//Parser converts raw binary data into readabe form
+	var p dnsmessage.Parser
+	header, err := p.Start(answer[:n])
+	if err != nil {
+		return nil, nil, fmt.Errorf("parser start error: %s", err)
+	}
+	//Collect all the questions from the dns response
+	questions, err := p.AllQuestions()
+	if err != nil {
+		return nil, nil, err
+	}
+	//Check if the number of questions from response is equal to the count of questions form the dns query
+	if len(questions) != len(message.Questions) {
+		return nil, nil, fmt.Errorf("answer packet doesnt have same number of questions ")
+	}
+	//Skip all questions as it is not required
+	err = p.SkipAllQuestions()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return &p, &header, nil
 }
