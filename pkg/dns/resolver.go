@@ -6,16 +6,35 @@ import (
 	"fmt"
 	"math/big"
 	"net"
+	"strings"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
 
 const ROOT_SERVERS = "198.41.0.4,199.9.14.201,192.33.4.12,199.7.91.13,192.203.230.10,192.5.5.241,192.112.36.4,198.97.190.53"
 
-func handlePacket(pc net.PacketConn, addr net.Addr, buf []byte) error {
-	return fmt.Errorf("not implemented yet!")
+func HandlePacket(pc net.PacketConn, addr net.Addr, buf []byte) {
+	if err := handlePacket(pc, addr, buf); err != nil {
+		fmt.Printf("handlePacket error [%s]: %s\n", addr.String(), err)
+	}
 }
-
+func handlePacket(pc net.PacketConn, addr net.Addr, buf []byte) error {
+	// p := dnsmessage.Parser{}
+	// header, err := p.Start(buf)
+	// if err != nil {
+	// 	return err
+	// }
+	// question, err := p.Question()
+	// if err != nil {
+	// 	return err
+	// }
+	// response, err := dnsQuery(getRootServers(), question)
+	// if err != nil {
+	// 	return err
+	// }
+	return fmt.Errorf("not implemented yet")
+}
+func dnsQuery()
 func outgoingDnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessage.Parser, *dnsmessage.Header, error) {
 
 	fmt.Printf("New outgoing dns query for %s, servers: %+v\n", question.Name.String(), servers)
@@ -99,4 +118,17 @@ func outgoingDnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessa
 	}
 
 	return &p, &header, nil
+}
+
+// function to get root servers in the form of IP
+func getRootServers() []net.IP {
+	rootServers := []net.IP{} // an array to store Ip
+	//Each rootServer is taken from the string ROOT_SERVERS
+	for _, rootServer := range strings.Split(ROOT_SERVERS, ",") {
+		//each rootServer is added to the array rootServers
+		//since rootServer is in the form of string
+		//it converted to IP with the help of ParsIP
+		rootServers = append(rootServers, net.ParseIP(rootServer))
+	}
+	return rootServers
 }

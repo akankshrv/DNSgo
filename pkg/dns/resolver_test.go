@@ -1,6 +1,7 @@
 package dns
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +78,9 @@ func TestOutgoingDnsQuery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SkipAllAnswers error: %s", err)
 	}
+	//lists the authoritative nameservers
 	parsedAuthorities, err := dnsAnswer.AllAuthorities()
+	fmt.Printf("parsed authorities: %+v\n", parsedAuthorities)
 	if err != nil {
 		t.Fatalf("Error getting answers")
 	}
