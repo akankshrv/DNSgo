@@ -19,22 +19,130 @@ func HandlePacket(pc net.PacketConn, addr net.Addr, buf []byte) {
 	}
 }
 func handlePacket(pc net.PacketConn, addr net.Addr, buf []byte) error {
-	// p := dnsmessage.Parser{}
-	// header, err := p.Start(buf)
-	// if err != nil {
-	// 	return err
-	// }
-	// question, err := p.Question()
-	// if err != nil {
-	// 	return err
-	// }
-	// response, err := dnsQuery(getRootServers(), question)
-	// if err != nil {
-	// 	return err
-	// }
-	return fmt.Errorf("not implemented yet")
+	p := dnsmessage.Parser{}
+	header, err := p.Start(buf)
+	if err != nil {
+		return err
+	}
+	question, err := p.Question()
+	if err != nil {
+		return err
+	}
+	response, err := dnsQuery(getRootServers(), question)
+	if err != nil {
+		return err
+	}
+	response.Header.ID = header.ID         //response should have same ID as that of the query
+	responseBuffer, err := response.Pack() //converting message format to bytes
+	if err != nil {
+		return err
+	}
+	_, err = pc.WriteTo(responseBuffer, addr) //write the respone to the connection
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
-func dnsQuery()
+
+func dnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessage.Message, error) {
+	fmt.Printf("Question: %+v\n", question)
+	for i := 0; i < 3; i++ {
+		//sending DNS query through outgoingDnsQuery
+		dnsAnswer, header, err := outgoingDnsQuery(servers, question) //store the recieved answer and  the header
+		if err != nil {
+			return nil, err
+		}
+
+		//parse AllAnswers()
+		parsedAnswers, err := dnsAnswer.AllAnswers()
+		if err != nil {
+			return nil, err
+		}
+		//check if the header is authoritative,
+		//if yes return DNS message with the header & the parsed answer
+		//Works only in the end
+		if header.Authoritative {
+			return &dnsmessage.Message{
+				Header:  dnsmessage.Header{Response: true},
+				Answers: parsedAnswers,
+			}, nil
+		}
+		//fetch all the Authoritative Servers
+		authorities, err := dnsAnswer.AllAuthorities()
+		if err != nil {
+			return nil, err
+		}
+		//If no Auth Servers then Query is un resolved
+		if len(authorities) == 0 {
+			return &dnsmessage.Message{
+				Header: dnsmessage.Header{RCode: dnsmessage.RCodeNameError},
+				//RCodeNameError corresponds to NXDomain ( Value is 3 )
+				//which means domain name in the DNS query does not exist
+			}, nil
+		}
+
+		//Extract NameServers
+		nameservers := make([]string, len(authorities))
+		for k, authority := range authorities {
+			if authority.Header.Type == dnsmessage.TypeNS {
+
+				//Authority servers ( Name servers) are of type dnsmessage.NSResource{NS: nameoftheauthserver}
+				//We are extracting only the name of the auth server
+				nameservers[k] = authority.Body.(*dnsmessage.NSResource).NS.String()
+			}
+		}
+		fmt.Printf("name servers: %s", nameservers)
+		//Process Additionals
+		additionals, err := dnsAnswer.AllAdditionals()
+		if err != nil {
+			return nil, err
+		}
+		newResolverServersFound := false
+		servers = []net.IP{}
+		for _, additional := range additionals {
+
+			//TypeA is for Ipv4
+			//TypeAAA is for Ipv6
+			//If additional Header is of Type A
+			if additional.Header.Type == dnsmessage.TypeA {
+				for _, nameserver := range nameservers {
+					if additional.Header.Name.String() == nameserver {
+						newResolverServersFound = true
+						servers = append(servers, additional.Body.(*dnsmessage.AResource).A[:])
+					}
+				}
+			}
+		}
+		//if name server has not yet been found
+		if !newResolverServersFound {
+			for _, nameserver := range nameservers {
+				//checking for only one nameserver
+				if !newResolverServersFound {
+					response, err := dnsQuery(getRootServers(), dnsmessage.Question{Name: dnsmessage.MustNewName(nameserver), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
+					if err != nil {
+						fmt.Printf("warning: lookup of nameserver %s failed: %err\n", nameserver, err)
+					} else {
+						newResolverServersFound = true
+						for _, answer := range response.Answers {
+							if answer.Header.Type == dnsmessage.TypeA {
+								servers = append(servers, answer.Body.(*dnsmessage.AResource).A[:])
+							}
+						}
+					}
+				}
+			}
+
+		}
+
+	}
+	return &dnsmessage.Message{
+		Header: dnsmessage.Header{RCode: dnsmessage.RCodeServerFailure}}, nil
+}
+
+// Mainly handles DNS query construction
+// Sending it to the connection
+// Recieving response and parsing it
 func outgoingDnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessage.Parser, *dnsmessage.Header, error) {
 
 	fmt.Printf("New outgoing dns query for %s, servers: %+v\n", question.Name.String(), servers)
@@ -73,6 +181,7 @@ func outgoingDnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessa
 	var conn net.Conn //setting up connection
 	//loop iterates through servers slice , trying to connect to each DNS server.
 	for _, server := range servers {
+		//net.Dial is used to establish a network connection to a specified address
 		conn, err = net.Dial("udp", server.String()+":53") //udp port is 53 on dns
 		if err == nil {
 			break //Successfully connected
@@ -83,13 +192,13 @@ func outgoingDnsQuery(servers []net.IP, question dnsmessage.Question) (*dnsmessa
 		}
 	}
 
-	_, err = conn.Write(buf) //sending data
+	_, err = conn.Write(buf) //sending data (i.e message that includes question)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	answer := make([]byte, 512)
-	n, err := bufio.NewReader(conn).Read(answer) //reads data from the conn and stores it answer.
+	answer := make([]byte, 512)                  //Creating a buffer named "answer"
+	n, err := bufio.NewReader(conn).Read(answer) //reads response data from the conn and stores it answer.
 	if err != nil {
 		return nil, nil, err
 	}

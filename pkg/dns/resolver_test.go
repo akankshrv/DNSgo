@@ -1,7 +1,9 @@
 package dns
 
 import (
+	"crypto/rand"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +39,44 @@ func (m *MockPacketConn) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
+func TestHandlePacket(t *testing.T) {
+	names := []string{"www.google.com."} //domain names
+	for _, name := range names {
+		max := ^uint16(0)
+		randomNumber, err := rand.Int(rand.Reader, big.NewInt(int64(max))) //randomNumber for the Header ID
+		if err != nil {
+			t.Fatalf("rand error: %s", err)
+		}
+		//design message to send on the stream
+		message := dnsmessage.Message{
+			Header: dnsmessage.Header{
+				RCode:            dnsmessage.RCode(0),
+				ID:               uint16(randomNumber.Int64()),
+				OpCode:           dnsmessage.OpCode(0),
+				Response:         false,
+				AuthenticData:    false,
+				RecursionDesired: false,
+			},
+			Questions: []dnsmessage.Question{
+				{
+					Name:  dnsmessage.MustNewName(name),
+					Type:  dnsmessage.TypeA,
+					Class: dnsmessage.ClassINET,
+				},
+			},
+		}
+		buf, err := message.Pack()
+		if err != nil {
+			t.Fatalf("Pack error: %s", err)
+		}
+
+		err = handlePacket(&MockPacketConn{}, &net.IPAddr{IP: net.ParseIP("127.0.0.1")}, buf)
+		if err != nil {
+			t.Fatalf("serve error: %s", err)
+		}
+	}
+
+}
 func TestOutgoingDnsQuery(t *testing.T) {
 	//question
 	question := dnsmessage.Question{
